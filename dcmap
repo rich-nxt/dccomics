@@ -1,0 +1,381 @@
+local InsertService = game:GetService("InsertService")
+local Players = game:GetService("Players")
+
+local YIELD_A_CADA = 80
+
+-- Cada modelo tem seu próprio id, posições e (opcional) regras de remoção.
+local modelos = {
+    {
+        id = 10637444708,
+        offset = -4,
+        rotacao = Vector3.new(0, 0, 0),
+        posicoes = {
+            Vector3.new(1190, 4, 476),
+        },
+        pastasRemover = {
+            ["Vegetation"] = true,
+            ["Background"] = true,
+            ["Server Walls"] = true,
+            ["Infected Walls"] = true,
+            ["Client Walls"] = true,
+        },
+        nomesContem = { "FencePillar", "FenceBase" },
+        uniqueIds = {
+            ["2c2791931ef9da8e0a7c1c640000ed2e"] = true,
+            ["2c2791931ef9da8e0a7c1c6400010740"] = true,
+            ["2c2791931ef9da8e0a7c1c64000106f8"] = true,
+            ["2c2791931ef9da8e0a7c1c6400010741"] = true,
+            ["2c2791931ef9da8e0a7c1c6400010719"] = true,
+            ["2c2791931ef9da8e0a7c1c6400010252"] = true,
+            ["2c2791931ef9da8e0a7c1c6400017ba8"] = true,
+            ["2c2791931ef9da8e0a7c1c64000176e1"] = true,
+            ["2c2791931ef9da8e0a7c1c6400017b87"] = true,
+            ["2c2791931ef9da8e0a7c1c6400017bd0"] = true,
+            ["2c2791931ef9da8e0a7c1c6400017bcf"] = true,
+            ["2c2791931ef9da8e0a7c1c64000161bd"] = true,
+        },
+    },
+    {
+        id = 140289345444866,
+        offset = -4,
+        rotacao = Vector3.new(0, 175, 90),
+        escala = 0.8,
+        zerarRotacao = true, -- asset vem torto de fábrica; zera a rotação embutida antes de aplicar a desejada
+        posicoes = {
+            Vector3.new(297, -52, -1036),
+        },
+    },
+    {
+        id = 104215345967523,
+        offset = -4,
+        rotacao = Vector3.new(0, 0, 0),
+        escala = 1.0,
+        posicoes = {
+            Vector3.new(-593, -12, -936),
+        },
+    },
+    {
+        id = 5610903016,
+        offset = -4,
+        rotacao = Vector3.new(0, 180, 0),
+        escala = 1.0,
+        posicoes = {
+            Vector3.new(262, 4, 981),
+        },
+    },
+    {
+        id = 11820684331,
+        offset = -4,
+        rotacao = Vector3.new(0, 0, 0),
+        posicoes = {
+            Vector3.new(1027, -113, 211),
+        },
+    },
+}
+
+local cache = {}
+
+local function carregarAsset(id)
+    if cache[id] then return cache[id] end
+    local asset
+    local ok, res = pcall(function()
+        return InsertService:LoadAsset(id)
+    end)
+    if ok and res then
+        asset = res
+    else
+        local ok2, res2 = pcall(function()
+            return game:GetObjects("rbxassetid://" .. id)[1]
+        end)
+        if ok2 and res2 then asset = res2 end
+    end
+    cache[id] = asset
+    return asset
+end
+
+local function normalizarUniqueId(id)
+    return (tostring(id):gsub("-", ""):lower())
+end
+
+local PROPRIEDADES_DE_CONTEUDO = {
+    "MeshId", "TextureID", "TextureId", "Texture", "TextureContent",
+    "ImportId", "MeshContent",
+}
+
+local function contemAlgumUniqueId(filho, uniqueIds)
+    if not uniqueIds then return false end
+
+    local ok, uid = pcall(function() return filho.UniqueId end)
+    if ok and uid then
+        local norm = normalizarUniqueId(uid)
+        if uniqueIds[norm] then
+            return true
+        end
+    end
+
+    for _, propNome in ipairs(PROPRIEDADES_DE_CONTEUDO) do
+        local okProp, valor = pcall(function() return filho[propNome] end)
+        if okProp and valor then
+            local valorStr = tostring(valor):lower()
+            for hash in pairs(uniqueIds) do
+                if string.find(valorStr, hash, 1, true) then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+local function removerIndesejados(modelo, info)
+    local pastasRemover = info.pastasRemover
+    local nomesContem = info.nomesContem
+    local uniqueIds = info.uniqueIds
+
+    if not (pastasRemover or nomesContem or uniqueIds) then return end
+
+    local contador = 0
+    for _, filho in ipairs(modelo:GetDescendants()) do
+        if filho.Parent then
+            local deveRemover = false
+
+            if pastasRemover and filho:IsA("Folder") and pastasRemover[filho.Name] then
+                deveRemover = true
+            elseif nomesContem then
+                for _, trecho in ipairs(nomesContem) do
+                    if string.find(filho.Name, trecho, 1, true) then
+                        deveRemover = true
+                        break
+                    end
+                end
+            end
+
+            if not deveRemover and contemAlgumUniqueId(filho, uniqueIds) then
+                deveRemover = true
+            end
+
+            if deveRemover then
+                filho:Destroy()
+            end
+        end
+
+        contador = contador + 1
+        if contador >= YIELD_A_CADA then
+            contador = 0
+            task.wait()
+        end
+    end
+end
+
+local function anchorarTudo(modelo)
+    local contador = 0
+    for _, part in ipairs(modelo:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.Anchored = true
+        end
+
+        contador = contador + 1
+        if contador >= YIELD_A_CADA then
+            contador = 0
+            task.wait()
+        end
+    end
+end
+
+local function aplicarEscala(modelo, escala)
+    if not escala or escala == 1 then return end
+    if modelo:IsA("Model") then
+        local ok, erro = pcall(function()
+            modelo:ScaleTo(escala)
+        end)
+        if not ok then
+            warn("Falha ao escalar modelo:", erro)
+        end
+    end
+end
+
+local function grausParaRad(v)
+    return math.rad(v.X), math.rad(v.Y), math.rad(v.Z)
+end
+
+local function posicionar(modelo, posicao, offset, rotacao, zerarRotacao)
+    local rx, ry, rz = grausParaRad(rotacao)
+    local rotCF = CFrame.Angles(rx, ry, rz)
+    if modelo:IsA("Model") then
+        if zerarRotacao then
+            local pivoAtual = modelo:GetPivot()
+            modelo:PivotTo(CFrame.new(pivoAtual.Position)) -- remove a rotação de fábrica do asset
+        end
+        local _, tam = modelo:GetBoundingBox()
+        modelo:PivotTo(CFrame.new(posicao.X, posicao.Y + (tam.Y / 2) + offset, posicao.Z) * rotCF)
+    else
+        local part = modelo:IsA("BasePart") and modelo or modelo:FindFirstChildWhichIsA("BasePart")
+        if part then
+            part.CFrame = CFrame.new(posicao.X, posicao.Y + (part.Size.Y / 2) + offset, posicao.Z) * rotCF
+        end
+    end
+end
+
+local function removerCropLandDoJogo()
+    for _, inst in ipairs(workspace:GetDescendants()) do
+        if inst.Name == "CropLand" and inst.Parent then
+            inst:Destroy()
+        end
+    end
+end
+
+local function removerPolesDoMapa()
+    for _, inst in ipairs(workspace:GetDescendants()) do
+        if inst.Name == "Pole" and inst.Parent then
+            inst:Destroy()
+        end
+    end
+end
+
+-- ============================================================
+-- TELEPORTE COM PROXIMITYPROMPT (botão de entrada)
+-- ============================================================
+
+local ENTRADA_POSICAO = Vector3.new(1031, 5, 241)
+local ENTRADA_DESTINO = Vector3.new(1058, -53, 231)
+
+local function criarBotaoTeleporte(nome, posicao, destino, textoAcao, textoObjeto)
+    local anchor = Instance.new("Part")
+    anchor.Name = nome
+    anchor.Size = Vector3.new(2, 2, 2)
+    anchor.Anchored = true
+    anchor.CanCollide = false
+    anchor.Transparency = 1 -- invisível: só serve de ponto de ancoragem para o ProximityPrompt
+    anchor.CFrame = CFrame.new(posicao)
+    anchor.Parent = workspace
+
+    local prompt = Instance.new("ProximityPrompt")
+    prompt.ActionText = textoAcao or "Teleportar"
+    prompt.ObjectText = textoObjeto or "Portal"
+    prompt.HoldDuration = 0.5
+    prompt.MaxActivationDistance = 8
+    prompt.RequiresLineOfSight = false
+    prompt.Parent = anchor
+
+    prompt.Triggered:Connect(function(jogador)
+        local personagem = jogador.Character
+        local raiz = personagem and personagem:FindFirstChild("HumanoidRootPart")
+        if raiz then
+            raiz.CFrame = CFrame.new(destino + Vector3.new(0, 3, 0))
+        end
+    end)
+
+    return anchor
+end
+
+-- ============================================================
+-- CHECKPOINTS INVISÍVEIS (caminho até o teleporte final)
+-- ============================================================
+
+local CHECKPOINTS_POSICOES = {
+    Vector3.new(1049, -53, 128),
+    Vector3.new(1064, -53, 128),
+    Vector3.new(1063, -53, 128),
+    Vector3.new(1058, -53, 129),
+    Vector3.new(1055, -53, 128),
+    Vector3.new(1053, -53, 128),
+    Vector3.new(1051, -46, 127),
+    Vector3.new(1053, -47, 128),
+    Vector3.new(1055, -46, 128),
+    Vector3.new(1058, -52, 127),
+    Vector3.new(1061, -46, 126),
+    Vector3.new(1063, -45, 128),
+    Vector3.new(1061, -52, 129),
+    Vector3.new(1057, -48, 129),
+    Vector3.new(1055, -47, 130),
+    Vector3.new(1051, -47, 130),
+    Vector3.new(1052, -49, 128), -- último checkpoint: aciona o teleporte final
+}
+
+local CHECKPOINT_FINAL_DESTINO = Vector3.new(1108, 4, 189)
+
+local function criarCheckpoint(indice, posicao, ehFinal)
+    local part = Instance.new("Part")
+    part.Name = "Checkpoint" .. indice
+    part.Size = Vector3.new(4, 6, 4)
+    part.Anchored = true
+    part.CanCollide = false
+    part.Transparency = 1 -- invisível
+    part.CFrame = CFrame.new(posicao)
+    part.Parent = workspace
+
+    if ehFinal then
+        local debounce = {}
+        part.Touched:Connect(function(hit)
+            local personagem = hit:FindFirstAncestorOfClass("Model")
+            local jogador = personagem and Players:GetPlayerFromCharacter(personagem)
+            if not jogador then return end
+            if debounce[jogador] then return end
+
+            debounce[jogador] = true
+            local raiz = personagem:FindFirstChild("HumanoidRootPart")
+            if raiz then
+                raiz.CFrame = CFrame.new(CHECKPOINT_FINAL_DESTINO + Vector3.new(0, 3, 0))
+            end
+
+            task.delay(2, function()
+                debounce[jogador] = nil
+            end)
+        end)
+    end
+
+    return part
+end
+
+local function criarTodosOsCheckpoints()
+    for i, posicao in ipairs(CHECKPOINTS_POSICOES) do
+        local ehFinal = (i == #CHECKPOINTS_POSICOES)
+        criarCheckpoint(i, posicao, ehFinal)
+    end
+end
+
+task.spawn(function()
+    removerCropLandDoJogo()
+    removerPolesDoMapa()
+
+    for _, info in ipairs(modelos) do
+        local rot = info.rotacao or Vector3.new(0, 0, 0)
+        local asset = carregarAsset(info.id)
+
+        if asset then
+            for _, posicao in ipairs(info.posicoes) do
+                local ok, erro = pcall(function()
+                    local clone = asset:Clone()
+                    clone.Parent = nil -- fica fora do workspace enquanto ainda está desancorado/sujo
+
+                    removerIndesejados(clone, info)
+                    anchorarTudo(clone)
+                    aplicarEscala(clone, info.escala)
+                    posicionar(clone, posicao, info.offset, rot, info.zerarRotacao)
+
+                    clone.Parent = workspace -- só entra no jogo já ancorado e no lugar certo
+                end)
+
+                if not ok then
+                    warn("Erro ao posicionar", info.id, ":", erro)
+                end
+
+                task.wait(0.15)
+            end
+
+            -- libera o asset original assim que terminar esse modelo, em vez de segurar tudo em cache até o fim
+            if asset.Parent then asset:Destroy() end
+            cache[info.id] = nil
+
+            task.wait(0.3) -- respiro maior entre um modelo (potencialmente grande) e o próximo
+        else
+            warn("Falha ao carregar:", info.id)
+        end
+    end
+
+    criarBotaoTeleporte("BotaoEntrada", ENTRADA_POSICAO, ENTRADA_DESTINO, "Teleportar", "Portal")
+    criarTodosOsCheckpoints()
+
+    print("Todos os modelos carregados, objetos removidos, posicionados e sistema de teleporte criado.")
+end)
